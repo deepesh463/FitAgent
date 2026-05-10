@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "FitAgent",
+  "version": "1.0.0",
+  "description": "AI-powered fit scorer. See a 0-10 badge on every Myntra listing based on your exact measurements.",
+
+  "permissions": ["sidePanel", "storage", "activeTab", "tabs", "scripting"],
+
+  "host_permissions": [
+    "https://www.myntra.com/*",
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.x.ai/*",
+    "http://localhost:*/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://www.myntra.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+
+  "action": {
+    "default_title": "FitAgent",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

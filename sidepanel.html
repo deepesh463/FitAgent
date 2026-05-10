@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FitAgent</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+
+  <!-- ── Header ── -->
+  <header class="sp-header">
+    <div class="sp-logo">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff3f6c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20.38 3.46 16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.57a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.57a2 2 0 0 0-1.34-2.23z"/>
+      </svg>
+      <span>FitAgent</span>
+    </div>
+    <button class="sp-icon-btn" id="btnSettings" title="Settings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    </button>
+  </header>
+
+  <!-- ════════════════════════════════════════════════════
+       RESULTS VIEW
+  ══════════════════════════════════════════════════════ -->
+  <div id="viewResults" class="sp-view">
+
+    <!-- Analyze button + status -->
+    <div class="sp-action-bar">
+      <div class="sp-action-row">
+        <button class="sp-btn-primary" id="btnAnalyze">Analyze This Page</button>
+        <button class="sp-btn-sort hidden" id="btnSort" title="Sort Myntra cards by score">↕ Sort</button>
+        <button class="sp-btn-debug hidden" id="btnDebug" title="View data sent to LLM">🔍</button>
+      </div>
+      <div class="sp-action-row hidden" id="topRow">
+        <button class="sp-btn-open hidden" id="btnOpenTop">Open Top 5 →</button>
+      </div>
+
+      <!-- Debug modal -->
+      <div class="sp-debug-overlay hidden" id="debugOverlay">
+        <div class="sp-debug-box">
+          <div class="sp-debug-header">
+            <span>Data sent to LLM</span>
+            <button class="sp-icon-btn" id="btnCloseDebug">✕</button>
+          </div>
+          <pre class="sp-debug-pre" id="debugPre"></pre>
+        </div>
+      </div>
+      <div class="sp-status" id="status">Open a Myntra listing page and click Analyze.</div>
+
+      <!-- Score filter slider -->
+      <div class="sp-filter hidden" id="filterBar">
+        <div class="sp-filter-label">
+          <span>Show score ≥</span>
+          <span class="sp-filter-value" id="filterValue">0.0</span>
+        </div>
+        <input type="range" id="scoreSlider" min="0" max="10" step="0.5" value="0" />
+      </div>
+    </div>
+
+    <!-- Empty state -->
+    <div class="sp-empty" id="emptyState">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="1.4">
+        <path d="M20.38 3.46 16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.57a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.57a2 2 0 0 0-1.34-2.23z"/>
+      </svg>
+      <p>Results will appear here after analysis.</p>
+    </div>
+
+    <!-- Results list -->
+    <div id="resultsList" class="sp-results hidden"></div>
+
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       SETTINGS VIEW
+  ══════════════════════════════════════════════════════ -->
+  <div id="viewSettings" class="sp-view hidden">
+
+    <div class="sp-settings-header">
+      <button class="sp-icon-btn" id="btnBack" title="Back to results">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+      </button>
+      <h2>Settings</h2>
+    </div>
+
+    <form id="settingsForm" class="sp-form">
+
+      <!-- Profiles -->
+      <section class="sp-section">
+        <h3>Measurement Profiles</h3>
+        <div class="sp-profiles" id="profilePills"></div>
+        <div class="sp-field-row">
+          <label>Profile name</label>
+          <div class="sp-profile-name-row">
+            <input type="text" id="fProfileName" placeholder="e.g. Formal, Casual, Gym" />
+            <button type="button" class="sp-btn-add-profile" id="btnAddProfile">+ New</button>
+          </div>
+        </div>
+        <button type="button" class="sp-btn-delete-profile" id="btnDeleteProfile">Delete this profile</button>
+      </section>
+
+      <!-- Measurements -->
+      <section class="sp-section">
+        <h3>Your Measurements</h3>
+
+        <!-- Common fields -->
+        <div class="sp-field-row">
+          <label>Gender</label>
+          <select id="fGender">
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+            <option value="unisex">Unisex</option>
+          </select>
+        </div>
+
+        <!-- Category tabs -->
+        <div class="sp-measure-tabs">
+          <button type="button" class="sp-mtab active" data-tab="shirts">👕 Shirts</button>
+          <button type="button" class="sp-mtab" data-tab="trousers">👖 Trousers</button>
+          <button type="button" class="sp-mtab" data-tab="shoes">👟 Shoes</button>
+        </div>
+
+        <!-- Shirts panel -->
+        <div class="sp-mtab-panel" id="tabShirts">
+          <div class="sp-field-row">
+            <label>Chest (cm)</label>
+            <input type="number" id="fChest" placeholder="e.g. 100.5" min="50" max="200" step="any" />
+          </div>
+          <div class="sp-field-row">
+            <label>Length (cm)</label>
+            <input type="number" id="fLength" placeholder="e.g. 72.0" min="40" max="120" step="any" />
+          </div>
+          <div class="sp-field-row">
+            <label>Shoulder (cm)</label>
+            <input type="number" id="fShoulder" placeholder="e.g. 44.5" min="30" max="80" step="any" />
+          </div>
+          <div class="sp-field-row">
+            <label>Fit style</label>
+            <select id="fFit">
+              <option value="slim">Slim</option>
+              <option value="regular" selected>Regular</option>
+              <option value="oversized">Oversized</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Trousers panel -->
+        <div class="sp-mtab-panel hidden" id="tabTrousers">
+          <div class="sp-field-row">
+            <label>Waist (cm)</label>
+            <input type="number" id="fWaist" placeholder="e.g. 86.0" min="50" max="180" step="any" />
+          </div>
+          <div class="sp-field-row">
+            <label>Hip (cm)</label>
+            <input type="number" id="fHip" placeholder="e.g. 98.0" min="60" max="200" step="any" />
+          </div>
+          <div class="sp-field-row">
+            <label>Inseam (cm)</label>
+            <input type="number" id="fInseam" placeholder="e.g. 78.0" min="50" max="110" step="any" />
+          </div>
+          <div class="sp-field-row">
+            <label>Fit style</label>
+            <select id="fTrouserFit">
+              <option value="skinny">Skinny</option>
+              <option value="slim">Slim</option>
+              <option value="regular" selected>Regular</option>
+              <option value="baggy">Baggy</option>
+              <option value="stretched">Stretched (Lycra/Flex)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Shoes panel -->
+        <div class="sp-mtab-panel hidden" id="tabShoes">
+          <div class="sp-field-row">
+            <label>UK Shoe Size</label>
+            <input type="number" id="fUkShoe" placeholder="e.g. 9" min="3" max="14" step="0.5" />
+          </div>
+          <p class="sp-section-desc" style="margin-top:8px">India follows UK sizing. Half sizes supported (e.g. 9.5).</p>
+        </div>
+      </section>
+
+      <!-- Measurement Priority -->
+      <section class="sp-section">
+        <h3>What matters most to you?</h3>
+        <p class="sp-section-desc">Controls how much each dimension affects the final fit score.</p>
+
+        <!-- Shirt priorities -->
+        <div class="sp-pri-group" id="priGroupShirts">
+          <div class="sp-priority-row">
+            <span class="sp-priority-label">Chest</span>
+            <div class="sp-priority-toggle" id="priChest">
+              <button type="button" data-val="low">Low</button>
+              <button type="button" data-val="medium" class="active">Medium</button>
+              <button type="button" data-val="high">High</button>
+            </div>
+          </div>
+          <div class="sp-priority-row">
+            <span class="sp-priority-label">Shoulder</span>
+            <div class="sp-priority-toggle" id="priShoulder">
+              <button type="button" data-val="low">Low</button>
+              <button type="button" data-val="medium" class="active">Medium</button>
+              <button type="button" data-val="high">High</button>
+            </div>
+          </div>
+          <div class="sp-priority-row">
+            <span class="sp-priority-label">Length</span>
+            <div class="sp-priority-toggle" id="priLength">
+              <button type="button" data-val="low">Low</button>
+              <button type="button" data-val="medium" class="active">Medium</button>
+              <button type="button" data-val="high">High</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Trouser priorities -->
+        <div class="sp-pri-group hidden" id="priGroupTrousers">
+          <div class="sp-priority-row">
+            <span class="sp-priority-label">Waist</span>
+            <div class="sp-priority-toggle" id="priWaist">
+              <button type="button" data-val="low">Low</button>
+              <button type="button" data-val="medium" class="active">Medium</button>
+              <button type="button" data-val="high">High</button>
+            </div>
+          </div>
+          <div class="sp-priority-row">
+            <span class="sp-priority-label">Hip</span>
+            <div class="sp-priority-toggle" id="priHip">
+              <button type="button" data-val="low">Low</button>
+              <button type="button" data-val="medium" class="active">Medium</button>
+              <button type="button" data-val="high">High</button>
+            </div>
+          </div>
+          <div class="sp-priority-row">
+            <span class="sp-priority-label">Inseam</span>
+            <div class="sp-priority-toggle" id="priInseam">
+              <button type="button" data-val="low">Low</button>
+              <button type="button" data-val="medium" class="active">Medium</button>
+              <button type="button" data-val="high">High</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Shoes: no priority needed -->
+        <div class="sp-pri-group hidden" id="priGroupShoes">
+          <p class="sp-section-desc">Shoe scoring is based purely on size match — no dimension weighting needed.</p>
+        </div>
+      </section>
+
+      <!-- LLM -->
+      <section class="sp-section">
+        <h3>AI Provider</h3>
+
+        <div class="sp-field-row">
+          <label>Provider</label>
+          <select id="fProvider">
+            <option value="claude">Claude (Anthropic)</option>
+            <option value="openai">OpenAI (GPT)</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="grok">Grok (xAI)</option>
+            <option value="local">Local LLM (Ollama)</option>
+          </select>
+        </div>
+
+        <div class="sp-field-row" id="rowApiKey">
+          <label>API Key</label>
+          <input type="password" id="fApiKey" placeholder="Paste your API key" autocomplete="off" />
+        </div>
+
+        <div class="sp-field-row">
+          <label>Model</label>
+          <input type="text" id="fModel" placeholder="Leave blank for default" />
+        </div>
+
+        <div class="sp-field-row hidden" id="rowBaseUrl">
+          <label>Base URL</label>
+          <input type="text" id="fBaseUrl" placeholder="http://localhost:11434/v1" />
+        </div>
+
+        <div class="sp-provider-note" id="providerNote"></div>
+      </section>
+
+      <button type="submit" class="sp-btn-primary sp-btn-full">Save Settings</button>
+      <div class="sp-save-msg hidden" id="saveMsg">✓ Saved!</div>
+
+    </form>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

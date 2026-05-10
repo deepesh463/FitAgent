@@ -63,10 +63,11 @@ Category is detected from URL keywords. Product pages skip the listing scraper.
 ### Step 2 — Scraping
 
 **Listing page** (`SCRAPE_PRODUCTS`):
-- Queries `li.product-base, [class*="product-base"]`
+- Queries `li.product-base` first; falls back to `[class*="product-base"]` only if that returns nothing
+  - Fallback additionally filters out elements that are descendants of another matched element, preventing double-counting inner wrapper nodes that share the same class fragment
 - Extracts brand, name, price, href, visible size chips
-- Stamps each card with `data-msf-index` for later badge injection
-- Gender filter: word-boundary regex (`\bwomen\b`, `\bmen\b`) removes wrong-gender items
+- Stamps each card with `data-msf-index` (sequential integer) for later badge injection
+- Gender filter: word-boundary regex (`\bwomen\b`, `\bmen\b`) removes wrong-gender items in background.js after scraping; original `data-msf-index` values are preserved on the remaining products
 
 **Product page** (`SCRAPE_PRODUCT_PAGE`):
 - Reads `window.__myx.pdpData` directly
@@ -126,7 +127,7 @@ Streaming fetch with AbortController (10s timeout)
  "bd": {"chest": 9.0, "shoulder": 7.5, "front length": 8.0},
  "br": {"chest": "2cm ease, great fit", ...}}
 ```
-- `i` → product index (mapped back to original product)
+- `i` → batch-local position index used by LLM; `parseJSON` maps it to `products[r.i]` to recover the original product's `data-msf-index` (DOM position) so badge injection is correct even when gender filtering removes items mid-list
 - `bd` → breakdown scores per dimension (0–10, NOT cm values)
 - `br` → short text reasons per dimension
 
@@ -173,7 +174,10 @@ body.response_format = { type: 'json_object' }  // forces valid JSON output
 **Batch processing for local models:**
 - Small models (qwen2.5:3b) have ~4096 token context limits
 - Products are split into batches of 3 for local, full list for cloud
-- Compact prompt used for local: trimmed chart (200 chars), shorter instructions
+- Compact prompts used for local — trimmed chart (200 chars), inline ease rules, shorter instructions:
+  - `buildLocalPrompt` → shirts/tops
+  - `buildLocalTrouserPrompt` → trousers/jeans (separate compact variant; the full `buildTrouserPrompt` would overflow the context window)
+- Both local prompt variants request output wrapped as `{"results":[...]}` (Ollama JSON-mode requirement); `parseJSON` unwraps this transparently
 
 **Batch error recovery:**
 - Each batch runs in a try/catch independently
@@ -243,5 +247,8 @@ Everything stored in `chrome.storage.local`:
 | Priority weighting in JS post-LLM | LLMs inconsistently follow weight instructions; JS arithmetic is always correct |
 | Shoe scoring in pure JS | UK size matching requires no language reasoning — pure arithmetic is faster, cheaper, and more reliable |
 | `data-msf-index` for badge anchoring | Survives Myntra's React virtual DOM re-renders; more stable than class or position selectors |
+| `li.product-base` selector priority | Using the tag+class selector first avoids double-matching inner wrapper elements that share the `product-base` class fragment, which caused every-other-card badge gaps |
+| `orig.index` preserved through `parseJSON` | Gender filtering makes the product list non-contiguous (indices 0, 2, 4…); using the scraped DOM index rather than the LLM batch position ensures badge injection finds the right card |
+| Separate compact prompt per category for Ollama | A single compact prompt for all categories would need conditional inline logic; separate `buildLocalPrompt` / `buildLocalTrouserPrompt` keeps each under ~1500 tokens for a 3-item batch |
 | Batch error recovery | Cloud APIs occasionally timeout or rate-limit; partial results are better than a full failure for the user |
 | Compact JSON output keys (`i`, `bd`, `br`) | Reduces output token count by ~30%, important for small local models with strict limits |

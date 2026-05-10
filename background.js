@@ -454,9 +454,10 @@ async function callLLM(products, measurements, config, category = 'shirts') {
   const { provider = 'claude', apiKey, baseUrl, model } = config;
   const isLocal = provider === 'local';
 
-  const builder = category === 'trousers' ? buildTrouserPrompt
-    : isLocal ? buildLocalPrompt
-    : buildPrompt;
+  // For local models use compact prompts to stay within ~4096 token context window
+  const builder = isLocal
+    ? (category === 'trousers' ? buildLocalTrouserPrompt : buildLocalPrompt)
+    : (category === 'trousers' ? buildTrouserPrompt : buildPrompt);
 
   const batchSize = isLocal ? 3 : products.length;
 
@@ -602,6 +603,42 @@ Products:
 ${list}`;
 }
 
+// ── Compact trouser prompt for local models (qwen, llama 3B etc.) ────────────
+function buildLocalTrouserPrompt(products, measurements) {
+  const m   = measurements;
+  const fit = m.trouser_fit || m.fit_preference || 'regular';
+  const waistRule =
+      fit === 'skinny'    ? 'ease 0-1cm→10, 1-2cm→8, 2-4cm→6, >4cm→4, <0cm→5(stretch), <-2cm→1'
+    : fit === 'slim'      ? 'ease 1-3cm→10, 0-1cm→8, 3-5cm→6, <0cm→4, <-3cm→1'
+    : fit === 'baggy'     ? 'ease 8-15cm→10, 5-8cm→8, 15-20cm→6, <5cm→4, <0cm→2'
+    : fit === 'stretched' ? 'ease -2to2cm→10, 2-4cm→8, >4cm→6, <-2cm→4, <-4cm→1'
+    :                       'ease 2-5cm→10, 0-2cm→8, 5-8cm→7, >8cm→5, <0cm→4, <-3cm→1';
+
+  const list = products.map((p, i) => {
+    const inStock = [...new Set([...(p.available_sizes||[]), ...(p.sizes||[])])].join(',') || '?';
+    const oos     = (p.out_of_stock_sizes||[]).join(',') || '';
+    const chart   = (p.size_chart_raw||'').slice(0, 200) || 'none';
+    return `${i}|${p.brand}|in_stock:${inStock}${oos ? '|oos:'+oos : ''}|chart:${chart}`;
+  }).join('\n');
+
+  return `You score fit for TROUSERS/JEANS/PANTS. Output ONLY a JSON object with a "results" array.
+
+Body: waist=${m.waist_cm||'?'}cm hip=${m.hip_cm||'?'}cm inseam=${m.inseam_cm||'?'}cm fit=${fit}
+
+Rules:
+- chart cm values = garment. waist: ${waistRule}
+- hip: ease 2-6cm→10, 0-2cm→8, 6-10cm→7, <0cm→4, >10cm→5
+- inseam: |diff| 0-2cm→10, 2-4cm→8, 4-6cm→5, >6cm→3
+- 32/34 sizes: first=waist inches, second=inseam inches (×2.54 for cm)
+- single 28-40: waist inches (28=71,30=76,32=81,34=86,36=91,38=97cm)
+- OOS → score=0. No match → score=0,size="N/A"
+
+Output: {"results":[{"i":0,"score":8.5,"size":"32","fit_summary":"reason","bd":{"waist":9,"hip":8,"inseam":8},"br":{"waist":"2cm ease","hip":"4cm ease","inseam":"ok"}}]}
+
+Products:
+${list}`;
+}
+
 // ── Trouser prompt (same ease logic as shirts, different measurements) ────────
 function buildTrouserPrompt(products, measurements) {
   const m   = measurements;
@@ -734,7 +771,9 @@ function parseJSON(text, products) {
   return raw.map(r => {
     const orig = products?.[r.i] ?? {};
     return {
-      index:             r.i,
+      // Use the original DOM index (set by content.js during scraping) so badge
+      // injection finds the right card even after gender filtering removes items.
+      index:             orig.index ?? r.i,
       brand:             orig.brand ?? r.brand ?? '?',
       name:              orig.name  ?? r.name  ?? '?',
       price:             orig.price ?? r.price ?? '?',

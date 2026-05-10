@@ -11,14 +11,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // ── Scraper ──────────────────────────────────────────────────────────────────
 function scrapeProducts() {
-  // Myntra listing cards — try multiple selector patterns for resilience
-  const cards = [
-    ...document.querySelectorAll('li.product-base'),
-    ...document.querySelectorAll('[class*="product-base"]'),
-  ];
+  // Try the most specific selector first; fall back to class-contains only if it
+  // returns nothing. This avoids double-counting cards that match both selectors.
+  let rawCards = [...document.querySelectorAll('li.product-base')];
+  if (rawCards.length === 0) {
+    // Broader fallback — exclude elements that are descendants of another matched
+    // element to prevent injecting badges into inner wrappers.
+    const all = [...document.querySelectorAll('[class*="product-base"]')];
+    rawCards = all.filter(el => !el.parentElement?.closest('[class*="product-base"]'));
+  }
 
   // Keep cards that are actually in the visible DOM (not display:none)
-  const unique = [...new Set(cards)].filter(card =>
+  const unique = [...new Set(rawCards)].filter(card =>
     getComputedStyle(card).display !== 'none' &&
     getComputedStyle(card).visibility !== 'hidden'
   );

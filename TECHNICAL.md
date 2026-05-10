@@ -123,13 +123,17 @@ Streaming fetch with AbortController (10s timeout)
 
 **LLM Output Format (compact keys to save tokens):**
 ```json
-{"i": 0, "score": 8.5, "size": "L", "fit_summary": "...",
- "bd": {"chest": 9.0, "shoulder": 7.5, "front length": 8.0},
- "br": {"chest": "2cm ease, great fit", ...}}
+{"i": 0, "score": 8.7, "size": "L",
+ "fit_summary": "chest 7cm ease, shoulder 2cm ease, length 2cm ease",
+ "bd": {"chest": 7.5, "across shoulder": 9.5, "front length": 9.0},
+ "br": {"chest": "7cm ease, slightly loose", "across shoulder": "2cm ease, perfect", "front length": "2cm ease, good"}}
 ```
 - `i` → batch-local position index used by LLM; `parseJSON` maps it to `products[r.i]` to recover the original product's `data-msf-index` (DOM position) so badge injection is correct even when gender filtering removes items mid-list
-- `bd` → breakdown scores per dimension (0–10, NOT cm values)
-- `br` → short text reasons per dimension
+- `bd` → breakdown scores per dimension (0–10, NOT cm values). The prompt explicitly instructs the LLM to score **every dimension present in the chart** (chest + shoulder + length for shirts, waist + hip + inseam for trousers). The worked example in the prompt shows all three to reinforce this.
+- `br` → short text reasons per dimension (≤8 words each, mention actual ease in cm)
+- `size` → MUST be the exact label from the `in_stock` list. The prompt explicitly forbids converting numeric Indian sizes (38, 40, 42) to S/M/L labels — the output must match what's on the Myntra listing.
+- `parseJSON` accepts `fit_summary`, `reason`, `overall_reason`, `why`, or `summary` as key variants since different LLMs use different names
+- Values in `bd` that are `> 10` or `< 0` are invalid (cm values or ease smuggled in). Both rendering code and `applyPriorityWeights` guard against these: rendering skips them, `applyPriorityWeights` falls back to the LLM's overall score
 
 ### Step 5 — Priority Weighting (Post-LLM, JS)
 
@@ -247,8 +251,10 @@ Everything stored in `chrome.storage.local`:
 | Priority weighting in JS post-LLM | LLMs inconsistently follow weight instructions; JS arithmetic is always correct |
 | Shoe scoring in pure JS | UK size matching requires no language reasoning — pure arithmetic is faster, cheaper, and more reliable |
 | `data-msf-index` for badge anchoring | Survives Myntra's React virtual DOM re-renders; more stable than class or position selectors |
-| `li.product-base` selector priority | Using the tag+class selector first avoids double-matching inner wrapper elements that share the `product-base` class fragment, which caused every-other-card badge gaps |
+| URL deduplication in scraper | `li.product-base` and `[class*="product-base"]` can both match a parent and child element for the same product; deduplicating by anchor URL (not by DOM node) reliably picks each product exactly once, with the outer `li` winning |
 | `orig.index` preserved through `parseJSON` | Gender filtering makes the product list non-contiguous (indices 0, 2, 4…); using the scraped DOM index rather than the LLM batch position ensures badge injection finds the right card |
+| Negative `bd` guard in `applyPriorityWeights` | LLMs occasionally put ease cm values (which can be negative) into `bd` instead of 0–10 fit scores; guarding `v < 0 \|\| v > 10` falls back to the LLM's own overall score |
+| Exact size label in prompt | Without explicit instruction, LLMs convert Indian numeric sizes (38/40/42) to Western letter sizes (S/M/L); the prompt and worked example now use numeric sizes to enforce verbatim label output |
 | Separate compact prompt per category for Ollama | A single compact prompt for all categories would need conditional inline logic; separate `buildLocalPrompt` / `buildLocalTrouserPrompt` keeps each under ~1500 tokens for a 3-item batch |
 | Batch error recovery | Cloud APIs occasionally timeout or rate-limit; partial results are better than a full failure for the user |
 | Compact JSON output keys (`i`, `bd`, `br`) | Reduces output token count by ~30%, important for small local models with strict limits |

@@ -76,7 +76,10 @@ async function runAnalysis(tabId, tabUrl) {
     ? products
     : products.filter(p => !isWrongGender(p, gender));
   const capped = genderFiltered.slice(0, 50);
-  progress(`Found ${capped.length} product${capped.length !== 1 ? 's' : ''}. Fetching size charts…`);
+  const scrollHint = capped.length < 15 && !productPage
+    ? ' — scroll down & re-analyze to score more'
+    : '';
+  progress(`Found ${capped.length} product${capped.length !== 1 ? 's' : ''}${scrollHint}. Fetching size charts…`);
 
   // 4. Fetch size charts in parallel
   const enriched = await parallelMap(capped, async (p, i) => {
@@ -168,8 +171,9 @@ function applyPriorityWeights(product, priorities) {
   const dims = Object.keys(bd);
   if (dims.length === 0) return product.score; // no breakdown — keep LLM score
 
-  // Guard: if any value > 10 the LLM put measurements instead of scores — fall back
-  if (dims.some(k => (bd[k] ?? 0) > 10)) return product.score;
+  // Guard: if any value > 10 or < 0 the LLM put ease/cm values instead of 0-10
+  // fit scores — fall back to the LLM's own overall score which is usually correct.
+  if (dims.some(k => { const v = bd[k] ?? 0; return v > 10 || v < 0; })) return product.score;
 
   const weightMap = { low: 1, medium: 2, high: 3 };
   let totalWeight = 0;
@@ -540,6 +544,7 @@ TYPE 2 — INDIAN REFERENCE RANGES (when chart is "none" and sizes are numeric 3
 TASK for each product:
 1. Check size_chart — if it has cm values use TYPE 1 (garment measurements). If "none" and numeric sizes use TYPE 2.
 2. Find which in-stock size gives the best ease/fit for the customer.
+   ⚠ The "size" field in your output MUST be the EXACT label from the in_stock list (e.g. "38", "40", "42", "L", "XL"). Never convert or rename — if in_stock has "40", output "40" not "M".
 3. Score and fit_summary based on the cases below:
 
    CASE A — best size is IN STOCK:
@@ -559,13 +564,18 @@ TASK for each product:
    CASE D — wrong gender:
    - Score = 0, size = "N/A", fit_summary = "Wrong gender — skip this."
 
-4. "br" reasons: ≤8 words each, mention actual cm values.
-5. Only include a dimension in "bd"/"br" if the chart has data for it.
-6. Overall "score" = weighted average of bd scores (0–10). Never put cm values in "score" or "bd".
+4. Score EVERY dimension the chart provides — if chart has chest + shoulder + "front length", all three MUST appear in "bd" and "br". Do not omit any available dimension.
+5. "br" reasons: ≤8 words each, mention actual cm values and ease.
+6. Overall "score" = weighted average of ALL bd scores (0–10). Never put cm values in "score" or "bd".
 
-⚠ OUTPUT FORMAT — every number in "score" and "bd" must be between 0 and 10. They are FIT SCORES, not centimetres.
-Worked example (slim fit user chest=107cm, size L garment chest=114cm → ease=7cm → score 5-6):
-[{"i":0,"score":5.5,"size":"L","fit_summary":"114cm garment vs 107cm body — 7cm ease, too loose for slim fit.","bd":{"chest":5.5},"br":{"chest":"7cm ease, loose for slim"}}]
+⚠ CRITICAL OUTPUT RULES:
+- "score" and every value in "bd" MUST be a number between 0 and 10 — they are FIT SCORES, never centimetres or ease values
+- "size" MUST be the EXACT label from in_stock (e.g. output "40" if in_stock has "40", NOT "M")
+- Negative numbers are NEVER valid in "score" or "bd"
+
+Worked example (regular fit, chest=107cm, shoulder=44cm, length=72cm; in_stock:38,40,42,44; size 40 chart: chest=104cm, across shoulder=43cm, front length=72cm):
+ease: chest=−3cm(tight)→4.0, shoulder=−1cm(ok)→8.0, length=0cm→9.5 → avg≈7.2
+[{"i":0,"score":7.2,"size":"40","fit_summary":"Size 40: chest 104cm vs 107cm (−3cm, slightly tight), shoulder 43cm (−1cm, fine), length 72cm (perfect).","bd":{"chest":4.0,"across shoulder":8.0,"front length":9.5},"br":{"chest":"−3cm ease, slightly tight","across shoulder":"−1cm ease, ok","front length":"0cm ease, perfect"}}]
 
 Reply ONLY as a JSON array, no markdown, no explanation. All ${products.length} items, sorted score desc.`;
 }
@@ -590,14 +600,15 @@ function buildLocalPrompt(products, measurements) {
 
   return `You score fit for tops (shirts, t-shirts, polos, sweatshirts). Output ONLY a JSON object with a "results" array.
 
-Body: chest=${m.chest_cm}cm fit=${fit}
+Body: chest=${m.chest_cm}cm shoulder=${m.shoulder_cm||'?'}cm length=${m.length_cm||'?'}cm fit=${fit}
 
 Rules:
-- chart has cm values = garment size. ${easeRule}. Pick best in-stock size.
+- chart has cm values = garment size. Chest: ${easeRule}. Shoulder: ease 0-3cm→10, 3-5cm→8, 5-8cm→6, >8cm→4, <0cm→4. Length: ease 0-4cm→10, -2to0cm→8, 4-8cm→6, >8cm→4, <-2cm→3.
+- Score ALL dimensions present in chart (chest AND shoulder AND length if available). All must appear in "bd".
 - chart "none" + numeric sizes: 38=94-98cm,40=102-106cm,42=106-112cm,44=112-118cm,46=118-124cm body chest.
 - OOS size → score=0. No match → score=0,size="N/A".
 
-Output: {"results":[{"i":0,"score":8.5,"size":"L","fit_summary":"reason","bd":{"chest":9},"br":{"chest":"fits"}}]}
+Output (example with 3 dimensions): {"results":[{"i":0,"score":8.7,"size":"L","fit_summary":"chest 7cm ease, shoulder 2cm ease, length 2cm ease","bd":{"chest":7.5,"across shoulder":9.5,"front length":9.0},"br":{"chest":"7cm ease","across shoulder":"2cm ease","front length":"2cm ease"}}]}
 
 Products:
 ${list}`;
@@ -629,11 +640,12 @@ Rules:
 - chart cm values = garment. waist: ${waistRule}
 - hip: ease 2-6cm→10, 0-2cm→8, 6-10cm→7, <0cm→4, >10cm→5
 - inseam: |diff| 0-2cm→10, 2-4cm→8, 4-6cm→5, >6cm→3
+- Score ALL dimensions present in chart (waist AND hip AND inseam if available). All must appear in "bd".
 - 32/34 sizes: first=waist inches, second=inseam inches (×2.54 for cm)
 - single 28-40: waist inches (28=71,30=76,32=81,34=86,36=91,38=97cm)
 - OOS → score=0. No match → score=0,size="N/A"
 
-Output: {"results":[{"i":0,"score":8.5,"size":"32","fit_summary":"reason","bd":{"waist":9,"hip":8,"inseam":8},"br":{"waist":"2cm ease","hip":"4cm ease","inseam":"ok"}}]}
+Output: {"results":[{"i":0,"score":8.5,"size":"32","fit_summary":"waist 2cm ease, hip 4cm ease, inseam 1cm short","bd":{"waist":9,"hip":8,"inseam":8},"br":{"waist":"2cm ease, good","hip":"4cm ease, comfortable","inseam":"1cm short, fine"}}]}
 
 Products:
 ${list}`;
@@ -673,10 +685,11 @@ Scoring:
 
 For "32/34" style sizes: first=waist inches, second=inseam inches (×2.54 for cm).
 For single numeric 28-40: waist inches (28=71,30=76,32=81,34=86,36=91,38=97,40=102cm).
+⚠ "size" = EXACT label from in_stock list. Never rename (if in_stock has "32", output "32" not "S").
 CASE B (OOS): score=0. CASE C (no match): score=0,size="N/A".
 
-⚠ "score"/"bd" values = 0-10 fit scores, NOT cm.
-Example: [{"i":0,"score":8.5,"size":"32","fit_summary":"waist 83cm vs your 81cm — 2cm ease.","bd":{"waist":9.0,"hip":8.5,"inseam":8.0},"br":{"waist":"2cm ease","hip":"4cm ease","inseam":"1cm short"}}]
+⚠ "score"/"bd" values = 0-10 fit scores, NOT cm, NOT ease. Ease is only for internal calculation.
+Example: [{"i":0,"score":8.5,"size":"32","fit_summary":"waist 83cm vs your 81cm — 2cm ease, great fit.","bd":{"waist":9.0,"hip":8.5,"inseam":8.0},"br":{"waist":"2cm ease, great","hip":"4cm ease, comfortable","inseam":"1cm short, fine"}}]
 
 All ${products.length} items sorted score desc. JSON array only, no markdown.`;
 }
@@ -780,7 +793,8 @@ function parseJSON(text, products) {
       url:               orig.url   ?? r.url   ?? '',
       score:             r.score,
       suggested_size:    r.size,
-      fit_summary:       r.fit_summary ?? r.why ?? '',
+      // Accept any of the key names different LLMs use for the summary sentence
+      fit_summary:       r.fit_summary ?? r.reason ?? r.overall_reason ?? r.why ?? r.summary ?? '',
       breakdown:         r.bd ?? {},
       breakdown_reasons: r.br ?? {},
     };

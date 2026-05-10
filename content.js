@@ -11,33 +11,39 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // ── Scraper ──────────────────────────────────────────────────────────────────
 function scrapeProducts() {
-  // Try the most specific selector first; fall back to class-contains only if it
-  // returns nothing. This avoids double-counting cards that match both selectors.
-  let rawCards = [...document.querySelectorAll('li.product-base')];
-  if (rawCards.length === 0) {
-    // Broader fallback — exclude elements that are descendants of another matched
-    // element to prevent injecting badges into inner wrappers.
-    const all = [...document.querySelectorAll('[class*="product-base"]')];
-    rawCards = all.filter(el => !el.parentElement?.closest('[class*="product-base"]'));
-  }
-
-  // Keep cards that are actually in the visible DOM (not display:none)
-  const unique = [...new Set(rawCards)].filter(card =>
+  // Collect candidates from both selectors; li.product-base first so the outer
+  // list item wins when both a parent li and a child wrapper share the class.
+  const allCandidates = [...new Set([
+    ...document.querySelectorAll('li.product-base'),
+    ...document.querySelectorAll('[class*="product-base"]'),
+  ])].filter(card =>
     getComputedStyle(card).display !== 'none' &&
     getComputedStyle(card).visibility !== 'hidden'
   );
+
+  // Deduplicate by product URL — this is the most reliable dedup strategy because
+  // Myntra sometimes has both a parent li and a child div matching the selector for
+  // the same product.  The li appears first in allCandidates, so it wins.
+  const seenUrls = new Set();
+  const uniqueCards = [];
+  for (const card of allCandidates) {
+    const url = card.querySelector('a[href]')?.href || '';
+    if (!url || seenUrls.has(url)) continue;
+    seenUrls.add(url);
+    uniqueCards.push(card);
+  }
+
   const products = [];
 
-  unique.forEach((card, index) => {
-    const brand = text(card, '.product-brand, [class*="product-brand"]');
-    const name  = text(card, '.product-product, [class*="product-product"]');
-    const price = text(card, '.product-discountedPrice, .product-price, [class*="discountedPrice"], [class*="product-price"]');
-    const anchor = card.querySelector('a[href]');
-    const url = anchor ? anchor.href : '';
+  uniqueCards.forEach((card, index) => {
+    const brand  = text(card, '.product-brand, [class*="product-brand"]');
+    const name   = text(card, '.product-product, [class*="product-product"]');
+    const price  = text(card, '.product-discountedPrice, .product-price, [class*="discountedPrice"], [class*="product-price"]');
+    const url    = card.querySelector('a[href]')?.href || '';
 
     if (!url) return;
 
-    // Scrape size chips shown on the card (e.g. S, M, L, XL)
+    // Scrape size chips shown on the card (e.g. S, M, L, XL or 38, 40, 42)
     const sizeEls = card.querySelectorAll(
       '.product-sizes span, [class*="sizes"] span, [class*="size"] li, [class*="sizeChip"], [class*="size-chip"]'
     );
@@ -72,13 +78,19 @@ function injectBadges(scoredProducts) {
     const score    = parseFloat(product.score ?? 0);
     const cls      = score >= 7 ? 'green' : score >= 4 ? 'yellow' : 'red';
     const sizeText = product.suggested_size ?? '?';
-    const reason   = product.fit_summary ?? product.overall_reason ?? '';
+
+    // fit_summary is primary; fall back to joining br values if it's missing/generic
+    const rawSummary = product.fit_summary ?? product.overall_reason ?? '';
+    const isGeneric  = !rawSummary || rawSummary.length < 6 || /^(reason|summary|n\/a)$/i.test(rawSummary.trim());
+    const reason     = isGeneric
+      ? Object.entries(product.breakdown_reasons ?? {}).map(([k, v]) => `${cap(k)}: ${v}`).join(' · ')
+      : rawSummary;
 
     // Build breakdown mini-lines for the tooltip
     const bd = product.breakdown ?? {};
     const br = product.breakdown_reasons ?? {};
     const factorLines = Object.entries(bd)
-      .filter(([, v]) => v > 0) // skip 0 = no chart data
+      .filter(([, v]) => v > 0 && v <= 10) // skip 0 (no data) and >10 (LLM put cm values)
       .map(([k, v]) => {
         const pct   = Math.round(v * 10);
         const color = v >= 7 ? '#22c55e' : v >= 4 ? '#f59e0b' : '#ef4444';

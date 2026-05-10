@@ -211,8 +211,11 @@ function renderResults(products) {
                           isOos ? `Size ${p.suggested_size} (OOS)` :
                           `Recommended: ${p.suggested_size}`;
 
-    const factorRows = Object.keys(bd).length
-      ? Object.entries(bd).filter(([, val]) => val > 0).map(([factor, val]) => {
+    // Only render dimensions where the LLM returned a valid 0-10 score
+    // (values >10 mean the LLM confused cm measurements with fit scores)
+    const validBd    = Object.entries(bd).filter(([, val]) => val > 0 && val <= 10);
+    const factorRows = validBd.length
+      ? validBd.map(([factor, val]) => {
           const pct   = Math.min(100, Math.max(0, Number(val) * 10));
           const fCls  = val >= 7 ? 'green' : val >= 4 ? 'yellow' : 'red';
           const COLOR = { green: '#22c55e', yellow: '#f59e0b', red: '#ef4444' };
@@ -254,7 +257,7 @@ function renderResults(products) {
           <span class="sp-ring-label">${score.toFixed(1)}</span>
         </div>
       </div>
-      <div class="sp-reason ${reasonCls}">${esc(p.fit_summary ?? p.overall_reason ?? '')}</div>
+      <div class="sp-reason ${reasonCls}">${esc(buildReason(p))}</div>
       <button class="sp-expand-btn" data-idx="${rank}">Score breakdown ▾</button>
       <div class="sp-breakdown hidden" id="bd-${rank}">${factorRows}</div>
       <a class="sp-link" href="${esc(p.url)}" target="_blank" rel="noopener">View on Myntra →</a>
@@ -497,6 +500,17 @@ function setStatus(msg, type = 'info') {
 }
 
 function cap(str) { return str.charAt(0).toUpperCase() + str.slice(1); }
+
+// Return the best available fit summary, falling back to joined br values
+// when the LLM returned a generic placeholder like "reason" or left it empty.
+function buildReason(p) {
+  const raw = p.fit_summary ?? p.overall_reason ?? '';
+  const isGeneric = !raw || raw.length < 6 || /^(reason|summary|n\/a|none)$/i.test(raw.trim());
+  if (!isGeneric) return raw;
+  const br    = p.breakdown_reasons ?? {};
+  const parts = Object.entries(br).map(([k, v]) => `${cap(k)}: ${v}`);
+  return parts.join(' · ') || '';
+}
 
 function esc(str) {
   return String(str ?? '')
